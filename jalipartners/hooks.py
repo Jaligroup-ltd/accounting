@@ -4,6 +4,18 @@ app_publisher = "Jali Group"
 app_description = "accounting firm"
 app_email = "desire.mukunzi@jaligroup.rw"
 app_license = "mit"
+app_include_js = [
+    "/assets/jalipartners/js/company_restriction.js"
+]
+override_whitelisted_methods = {
+    "erpnext.setup.utils.get_exchange_rate": "jalipartners.currency.get_exchange_rate"
+}
+doc_events = {
+    "*": {
+        "validate": "jalipartners.utils.set_user_company",
+        "before_insert": "jalipartners.utils.set_user_company",
+    }
+}
 
 # Apps
 # ------------------
@@ -27,7 +39,6 @@ app_license = "mit"
 # include js, css files in header of desk.html
 # app_include_css = "/assets/jalipartners/css/jalipartners.css"
 # app_include_js = "/assets/jalipartners/js/jalipartners.js"
-
 # include js, css files in header of web template
 # web_include_css = "/assets/jalipartners/css/jalipartners.css"
 # web_include_js = "/assets/jalipartners/js/jalipartners.js"
