@@ -5,6 +5,10 @@ def get_user_permitted_company():
     """Return the company this user is permitted to access"""
     if frappe.session.user == "Administrator":
         return None
+    
+      # Super Admin sees all companies — no restriction
+    if "Super Admin" in frappe.get_roles(frappe.session.user):
+        return None
 
     # Check User Permission
     permitted = frappe.get_all(
