@@ -16,6 +16,17 @@ doc_events = {
         "before_insert": "jalipartners.utils.set_user_company",
     }
 }
+# Custom Login and splash logo
+app_logo_url = "/assets/jalipartners/images/jali_partners_transparent.png"
+
+# Optional: also override the login page splash
+splash_image = "/assets/jalipartners/images/jali_partners_transparent.png"
+
+# Optional: browser tab favicon
+website_context = {
+    "favicon": "/assets/jalipartners/images/jali_partners_transparent.png",
+    "splash_image": "/assets/jalipartners/images/jali_partners_transparent.png",
+}
 
 # Apps
 # ------------------
