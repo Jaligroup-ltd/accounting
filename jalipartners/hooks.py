@@ -26,6 +26,8 @@ splash_image = "/assets/jalipartners/images/jali_partners_transparent.png"
 website_context = {
     "favicon": "/assets/jalipartners/images/jali_partners_transparent.png",
     "splash_image": "/assets/jalipartners/images/jali_partners_transparent.png",
+    "footer_powered": '<a href="https://jalipartners.com">Powered by Jali Partners</a>'
+
 }
 
 # Re-assert branding on every `bench migrate` to prevent ERPNext defaults
