@@ -35,3 +35,4 @@ website_context = {
 # Re-assert branding on every `bench migrate` to prevent ERPNext defaults
 # from winning the hook-fallback race when DB fields are empty.
 before_migrate = "jalipartners.branding.apply_branding"
+dashboard_chart_source = "jalipartners.jalipartners.api.dashboard"
