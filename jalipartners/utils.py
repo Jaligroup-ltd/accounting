@@ -1,4 +1,5 @@
 import frappe
+from frappe import _
 
 @frappe.whitelist()
 def get_user_permitted_company():
