@@ -42,3 +42,21 @@ def set_user_company(doc, method):
 
     if not doc.company:
         doc.company = user_company
+
+def prevent_submit_for_basic(doc, method):
+    """Block Company Basic users from submitting any transactional document"""
+    if frappe.session.user == "Administrator":
+        return
+    
+    user_roles = frappe.get_roles(frappe.session.user)
+    
+    # If user has Company Basic but no higher role, block submit
+    if "Company Basic" in user_roles \
+       and "Company Staff" not in user_roles \
+       and "Company Admin" not in user_roles \
+       and "Super Admin" not in user_roles:
+        frappe.throw(
+            _("Company Basic users can only create drafts. "
+              "Please ask a Company Staff or Company Admin to submit this document."),
+            frappe.PermissionError
+        )

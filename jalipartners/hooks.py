@@ -14,8 +14,17 @@ doc_events = {
     "*": {
         "validate": "jalipartners.utils.set_user_company",
         "before_insert": "jalipartners.utils.set_user_company",
-    }
+        "Sales Invoice":     {"before_submit": "jalipartners.utils.prevent_submit_for_basic"},
+        "Purchase Invoice":  {"before_submit": "jalipartners.utils.prevent_submit_for_basic"},
+        "Payment Entry":     {"before_submit": "jalipartners.utils.prevent_submit_for_basic"},
+        "Journal Entry":     {"before_submit": "jalipartners.utils.prevent_submit_for_basic"},
+        "Delivery Note":     {"before_submit": "jalipartners.utils.prevent_submit_for_basic"},
+        "Sales Order":       {"before_submit": "jalipartners.utils.prevent_submit_for_basic"},
+        "Purchase Order":    {"before_submit": "jalipartners.utils.prevent_submit_for_basic"},
+        "Stock Entry":       {"before_submit": "jalipartners.utils.prevent_submit_for_basic"},
 }
+    }
+
 # Custom Login and splash logo (fallback values — used only when DB fields are empty)
 app_logo_url = "/assets/jalipartners/images/jali_partners_transparent.png"
 
