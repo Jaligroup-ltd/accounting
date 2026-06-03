@@ -45,3 +45,6 @@ website_context = {
 # from winning the hook-fallback race when DB fields are empty.
 before_migrate = "jalipartners.branding.apply_branding"
 dashboard_chart_source = "jalipartners.jalipartners.api.dashboard"
+after_migrate = [
+    "jalipartners.setup.user_customization.setup_user_role_profile_restrictions",
+]
