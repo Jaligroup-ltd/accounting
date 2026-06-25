@@ -74,7 +74,7 @@ def _do_fetch(from_date, to_date, user):
         resp.raise_for_status()
         # Success here only means the run STARTED; the service will call
         # notify_fetch_done when the scrape+import actually completes.
-        _toast(user, "I&M fetch started — you'll be notified when it's done.",
+        _toast(user, "I&M fetch started , you'll be notified when it's done.",
                indicator="blue")
     except Exception as e:
         frappe.log_error(f"imbank trigger_fetch failed: {e}", "imbank_feed")
@@ -89,7 +89,7 @@ def notify_fetch_done(success=False, detail=""):
     to a real ERPNext user. We push a realtime event that the browser shows.
     """
     success = frappe.parse_json(success) if isinstance(success, str) else success
-    msg = ("I&M import complete — click 'Get Unreconciled Entries'."
+    msg = ("I&M import complete , click 'Get Unreconciled Entries'."
            if success else f"I&M import failed: {detail}")
     # Publish immediately (after_commit=False): this API call doesn't write to
     # the DB, so there's no commit to wait for — after_commit=True would mean
