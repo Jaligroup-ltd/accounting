@@ -91,13 +91,15 @@ def notify_fetch_done(success=False, detail=""):
     success = frappe.parse_json(success) if isinstance(success, str) else success
     msg = ("I&M import complete — click 'Get Unreconciled Entries'."
            if success else f"I&M import failed: {detail}")
-    # Broadcast to all sessions of the triggering user. Simplest: publish to
-    # everyone with the realtime event; the client filters by event name.
+    # Publish immediately (after_commit=False): this API call doesn't write to
+    # the DB, so there's no commit to wait for — after_commit=True would mean
+    # the event never fires. Broadcast to everyone; the client filters by event.
     frappe.publish_realtime(
         event="imbank_feed_done",
         message={"success": bool(success), "detail": detail, "msg": msg},
-        after_commit=True,
+        after_commit=False,
     )
+    frappe.db.commit()  # flush so socketio delivers without delay
     return {"ok": True}
 
 
@@ -107,5 +109,5 @@ def _toast(user, message, indicator="blue"):
         event="imbank_feed_toast",
         message={"message": message, "indicator": indicator},
         user=user,
-        after_commit=True,
+        after_commit=False,
     )
