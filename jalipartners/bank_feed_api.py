@@ -25,70 +25,71 @@ import requests
 #                           header Authorization: token <bank_feed_service_token>
 #                           returns JSON like {"ok": true, "created": <n>}
 BANK_FEEDS = {
-    "imbank": {"label": "I&M Bank",        "service_url": "http://127.0.0.1:8899/fetch"},
-    "bkbank": {"label": "Bank of Kigali",  "service_url": "http://127.0.0.1:8898/fetch"},
-    # "equity": {"label": "Equity Bank",   "service_url": "http://127.0.0.1:8897/fetch"},
+	"imbank": {"label": "I&M Bank", "service_url": "http://127.0.0.1:8899/fetch"},
+	"bkbank": {"label": "Bank of Kigali", "service_url": "http://127.0.0.1:8898/fetch"},
+	# "equity": {"label": "Equity Bank",   "service_url": "http://127.0.0.1:8897/fetch"},
 }
 
 # dotted path to _run_fetch for frappe.enqueue. Derived from this module's real import
 # path (__name__), so it's correct wherever the file is placed — no manual matching.
 _RUN_FETCH_PATH = f"{__name__}._run_fetch"
 
+
 def _service_token():
-    token = frappe.conf.get("bank_feed_service_token")
-    if not token:
-        frappe.throw("bank_feed_service_token is not set in site_config.json")
-    return token
+	token = frappe.conf.get("bank_feed_service_token")
+	if not token:
+		frappe.throw("bank_feed_service_token is not set in site_config.json")
+	return token
 
 
 @frappe.whitelist()
 def get_bank_feeds():
-    """Banks available to fetch — feeds the reconciliation-tool dropdown."""
-    return [{"value": key, "label": cfg["label"]} for key, cfg in BANK_FEEDS.items()]
+	"""Banks available to fetch — feeds the reconciliation-tool dropdown."""
+	return [{"value": key, "label": cfg["label"]} for key, cfg in BANK_FEEDS.items()]
 
 
 @frappe.whitelist()
 def trigger_fetch(bank, from_date=None, to_date=None):
-    """Queue a fetch for `bank`. Returns immediately; completion arrives via realtime."""
-    if bank not in BANK_FEEDS:
-        frappe.throw(f"Unknown bank feed: {bank}")
-    frappe.enqueue(
-        _RUN_FETCH_PATH,
-        queue="long",
-        timeout=1500,
-        bank=bank,
-        from_date=from_date,
-        to_date=to_date,
-        user=frappe.session.user,
-    )
-    return {"queued": True, "bank": bank, "label": BANK_FEEDS[bank]["label"]}
+	"""Queue a fetch for `bank`. Returns immediately; completion arrives via realtime."""
+	if bank not in BANK_FEEDS:
+		frappe.throw(f"Unknown bank feed: {bank}")
+	frappe.enqueue(
+		_RUN_FETCH_PATH,
+		queue="long",
+		timeout=1500,
+		bank=bank,
+		from_date=from_date,
+		to_date=to_date,
+		user=frappe.session.user,
+	)
+	return {"queued": True, "bank": bank, "label": BANK_FEEDS[bank]["label"]}
 
 
 def _run_fetch(bank, from_date, to_date, user):
-    """Background job: call the bank's local service, then notify the user."""
-    feed = BANK_FEEDS[bank]
-    try:
-        resp = requests.post(
-            feed["service_url"],
-            json={"from_date": from_date, "to_date": to_date},
-            headers={"Authorization": f"token {_service_token()}"},
-            timeout=1200,
-        )
-        resp.raise_for_status()
-        data = resp.json() if resp.content else {}
-        created = data.get("created")
-        made = f"{created} new transaction(s)" if created is not None else "done"
-        notify_fetch_done(user, bank, ok=True, message=f"{feed['label']}: {made}")
-    except Exception as e:
-        notify_fetch_done(user, bank, ok=False, message=f"{feed['label']} fetch failed: {e}")
-        raise
+	"""Background job: call the bank's local service, then notify the user."""
+	feed = BANK_FEEDS[bank]
+	try:
+		resp = requests.post(
+			feed["service_url"],
+			json={"from_date": from_date, "to_date": to_date},
+			headers={"Authorization": f"token {_service_token()}"},
+			timeout=1200,
+		)
+		resp.raise_for_status()
+		data = resp.json() if resp.content else {}
+		created = data.get("created")
+		made = f"{created} new transaction(s)" if created is not None else "done"
+		notify_fetch_done(user, bank, ok=True, message=f"{feed['label']}: {made}")
+	except Exception as e:
+		notify_fetch_done(user, bank, ok=False, message=f"{feed['label']} fetch failed: {e}")
+		raise
 
 
 def notify_fetch_done(user, bank, ok, message):
-    """Realtime toast to the triggering user. after_commit=False so it fires reliably."""
-    frappe.publish_realtime(
-        "bank_feed_done",
-        {"bank": bank, "ok": ok, "message": message},
-        user=user,
-        after_commit=False,
-    )
+	"""Realtime toast to the triggering user. after_commit=False so it fires reliably."""
+	frappe.publish_realtime(
+		"bank_feed_done",
+		{"bank": bank, "ok": ok, "message": message},
+		user=user,
+		after_commit=False,
+	)
