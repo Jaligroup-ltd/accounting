@@ -1,16 +1,16 @@
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
 
 with open("requirements.txt") as f:
-    install_requires = f.read().strip().split("\n")
+	install_requires = f.read().strip().split("\n")
 
 setup(
-    name="Accounting",
-    version="0.0.1",
-    description="Jali Partners Custom Accounting System",
-    author="Jali Group",
-    author_email="desire.mukunzi@jaligroup.rw",
-    packages=find_packages(),
-    zip_safe=False,
-    include_package_data=True,
-    install_requires=install_requires,
+	name="Accounting",
+	version="0.0.1",
+	description="Jali Partners Custom Accounting System",
+	author="Jali Group",
+	author_email="desire.mukunzi@jaligroup.rw",
+	packages=find_packages(),
+	zip_safe=False,
+	include_package_data=True,
+	install_requires=install_requires,
 )
