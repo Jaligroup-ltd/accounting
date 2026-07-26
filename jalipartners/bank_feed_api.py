@@ -27,7 +27,7 @@ import requests
 BANK_FEEDS = {
 	"imbank": {"label": "I&M Bank", "service_url": "http://127.0.0.1:8899/fetch"},
 	"bkbank": {"label": "Bank of Kigali", "service_url": "http://127.0.0.1:8898/fetch"},
-	# "equity": {"label": "Equity Bank",   "service_url": "http://127.0.0.1:8897/fetch"},
+    "mtnmomo": {"label": "MTN MoMo",       "service_url": "http://127.0.0.1:8897/fetch"}
 }
 
 # dotted path to _run_fetch for frappe.enqueue. Derived from this module's real import
