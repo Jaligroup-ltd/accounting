@@ -1,5 +1,5 @@
 """
-bank_feed_api.py — Frappe server methods for triggering per-bank statement fetches from the
+bank_feed_api.py : Frappe server methods for triggering per-bank statement fetches from the
 Bank Reconciliation Tool. The feed is inferred from the SELECTED Bank Account (no dropdown):
 each feed lists the exact Bank Account name(s) it reconciles.
 
