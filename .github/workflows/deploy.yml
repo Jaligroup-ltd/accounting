@@ -32,7 +32,7 @@ jobs:
         run: |
           ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "
             set -e
-            cd ${{ secrets.BENCH_PATH }}/apps/jalipartners
+            cd ${{ secrets.BENCH_PATH }}/apps/jalipartners/jalipartners
             git pull
             cd ${{ secrets.BENCH_PATH }}
             bench --site ${{ secrets.SITE_NAME }} clear-cache
