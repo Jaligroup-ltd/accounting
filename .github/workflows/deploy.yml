@@ -1,0 +1,48 @@
+name: Deploy (pull + clear-cache)
+
+# Fires after ci.yml succeeds on main. No environment gate, no approval —
+# runs unattended.
+on:
+  workflow_run:
+    workflows: ["CI"]          # must match the `name:` field inside ci.yml exactly
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set up SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Add server to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Pull current branch and clear cache
+        run: |
+          ssh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "
+            set -e
+            cd ${{ secrets.BENCH_PATH }}/apps/jalipartners/jalipartners
+            git pull
+            cd ${{ secrets.BENCH_PATH }}
+            bench --site ${{ secrets.SITE_NAME }} clear-cache
+          "
+
+      - name: Health check
+        run: |
+          status=$(curl -s -o /dev/null -w "%{http_code}" https://${{ secrets.SITE_NAME }})
+          echo "Site responded with HTTP $status"
+          if [ "$status" -ge 400 ] || [ "$status" -eq 000 ]; then
+            echo "::error::Health check failed after deploy (HTTP $status)."
+            exit 1
+          fi
