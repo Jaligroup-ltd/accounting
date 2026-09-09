@@ -45,3 +45,6 @@ after_migrate = [
 	"jalipartners.setup.user_customization.setup_user_role_profile_restrictions",
     "jalipartners.branding.rename_pos_workspace"
 ]
+doctype_js = {
+	"Bank Reconciliation Tool": "public/js/cash_coding.js",
+}

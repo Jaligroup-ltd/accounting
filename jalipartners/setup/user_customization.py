@@ -1,6 +1,6 @@
 import frappe
 
-ALLOWED_ROLE_PROFILES = ["Super Admin", "Company Admin", "Company Staff", "Company Basic"]
+ALLOWED_ROLE_PROFILES = ["Super Admin", "Company Admin", "Company Staff", "Company Basic","Credentials Feeder"]
 
 
 def setup_user_role_profile_restrictions():
