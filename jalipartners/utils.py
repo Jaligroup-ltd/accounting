@@ -56,6 +56,7 @@ def prevent_submit_for_basic(doc, method):
 		and "Company Staff" not in user_roles
 		and "Company Admin" not in user_roles
 		and "Super Admin" not in user_roles
+		and "Credentials Feeder" not in user_roles
 	):
 		frappe.throw(
 			_(
