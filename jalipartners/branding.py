@@ -4,7 +4,7 @@ BRANDING_LOGO = "/assets/jalipartners/images/jali_partners_transparent.png"
 
 def rename_pos_workspace():
     if frappe.db.exists("Workspace", "POS Awesome"):
-        frappe.rename_doc("Workspace", "POS Awesome", "POS", force=True)
+        frappe.rename_doc("Workspace", "POS Awesome", "Our POS", force=True)
     if frappe.db.exists("Workspace", "POS"):
         frappe.db.set_value("Workspace", "POS", {"label": "POS", "title": "POS"})
 

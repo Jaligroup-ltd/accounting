@@ -216,5 +216,4 @@ Things the pipeline is sensitive to:
   non-interactive context and `git pull` fails inside the deploy script. The `frappe` user needs
   its own GitHub deploy key, a `~/.ssh/config` entry, and GitHub's host fingerprint
   pre-accepted.
-- The org's free-tier Actions minutes (2,000/month, $0 spending limit) can be exhausted, which
-  blocks every job. Mitigation is a self-hosted runner on the existing droplet.
+

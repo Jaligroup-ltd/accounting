@@ -1,13 +1,11 @@
 """Credential distribution API for the bank feed microservices.
 
-Reads the "Bank Credential" DocType, whose fieldnames are the environment
-variable names themselves (IMBANK_USERNAME, BK_PASSWORD, ...), and hands them
-to the scrapers over loopback.
+Serves one company's bank logins, plus the Bank Account each feed's
+transactions should be posted to, from the "Bank Credential" DocType.
 
-Fields are discovered from the DocType meta, not hard-coded here: any Data or
-Password field whose fieldname is UPPER_SNAKE_CASE is treated as a credential.
-Adding a fifth bank later means adding two fields in the UI and two lines to
-CREDENTIAL_MAP in credentials.py - no change to this file.
+Fields are explicit (`bank_feed`, `username`, `password`, `bank_account`), so
+there is no fieldname guessing: adding a bank is a new Bank Feed record plus a
+row, with no change to this file.
 
 Authentication is a normal Frappe API key/secret belonging to a dedicated
 service user, sent as:
@@ -20,7 +18,6 @@ endpoint - the site answers on the public internet.
 """
 
 import hashlib
-import re
 
 import frappe
 from frappe import _
@@ -28,18 +25,6 @@ from frappe.utils import now_datetime
 
 CRED_DOCTYPE = "Bank Credential"
 CRED_ROLE = "Bank Credential Manager"
-
-# Which fields count as credentials.
-#
-# Any Password-type field qualifies outright - on this doctype a Password field
-# is a credential by definition. Data fields qualify when the name ends in a
-# credential-ish word, which is what lets a fifth bank be added in the UI with
-# no change here. Matching is case-insensitive: Frappe lowercases fieldnames
-# generated from labels, so IMBANK_USERNAME becomes imbank_username.
-CRED_NAME_PATTERN = re.compile(
-    r"(?:^|_)(username|user|password|passwd|pass|secret|login)$", re.I
-)
-CREDENTIAL_FIELDTYPES = ("Data", "Password")
 
 
 def _guard():
@@ -52,137 +37,155 @@ def _guard():
         raise frappe.PermissionError(_("Not permitted to read bank credentials."))
 
 
-def _fingerprint(value):
-    return hashlib.sha256((value or "").encode("utf-8")).hexdigest()[:16]
+def _fingerprint(*parts):
+    raw = "\x00".join(p or "" for p in parts).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:16]
 
 
-def _get_credential_doc(docname=None):
-    """Return the document holding the credentials.
+def _resolve_company(company=None):
+    """Return the Bank Credential document name to read.
 
-    Works whether "Bank Credential" is a Single doctype or a normal one with a
-    single record. With more than one record, the caller must name it.
+    With a company given, use it. Without one, fall back to the only enabled
+    record - which keeps single-company installs from needing any config.
     """
-    meta = frappe.get_meta(CRED_DOCTYPE)
+    if company:
+        if not frappe.db.exists(CRED_DOCTYPE, company):
+            frappe.throw(_("No Bank Credential record for company {0}.").format(company))
+        return company
 
-    if meta.issingle:
-        return frappe.get_doc(CRED_DOCTYPE)
-
-    if docname:
-        return frappe.get_doc(CRED_DOCTYPE, docname)
-
-    names = frappe.get_all(CRED_DOCTYPE, pluck="name", limit=2)
+    names = frappe.get_all(CRED_DOCTYPE, filters={"enabled": 1}, pluck="name", limit=2)
     if not names:
-        frappe.throw(_("No Bank Credential record exists yet."))
+        frappe.throw(_("No enabled Bank Credential record exists."))
     if len(names) > 1:
         frappe.throw(
-            _("More than one Bank Credential record exists. Make the DocType Single, "
-              "or set ERP_CREDENTIAL_DOC in the scraper .env to name the one to use.")
+            _("Several companies have credentials. Pass a company, or set "
+              "ERP_COMPANY in the scraper .env.")
         )
-    return frappe.get_doc(CRED_DOCTYPE, names[0])
-
-
-def _is_credential_field(df):
-    if df.fieldtype == "Password":
-        return True
-    if df.fieldtype == "Data" and CRED_NAME_PATTERN.search(df.fieldname or ""):
-        return True
-    return False
-
-
-def _credential_fieldnames(meta):
-    """[(fieldname, ENV_VAR_NAME, fieldtype)] for every credential field."""
-    return [
-        (df.fieldname, (df.fieldname or "").upper(), df.fieldtype)
-        for df in meta.fields
-        if _is_credential_field(df)
-    ]
+    return names[0]
 
 
 @frappe.whitelist()
-def ping():
-    """Connectivity + auth probe, and a field-discovery report.
-
-    `matched` is what will be sent; `skipped` is every other Data/Password field
-    with the reason, so a fieldname that does not qualify is obvious here rather
-    than showing up as a silently missing credential later.
-    """
+def ping(company=None):
+    """Connectivity, auth, and a configuration report for one company."""
     _guard()
-    meta = frappe.get_meta(CRED_DOCTYPE)
 
-    matched = [
-        {"field": fn, "env_var": env, "type": ft}
-        for fn, env, ft in _credential_fieldnames(meta)
-    ]
-    skipped = [
-        {"field": df.fieldname, "type": df.fieldtype}
-        for df in meta.fields
-        if df.fieldtype in CREDENTIAL_FIELDTYPES and not _is_credential_field(df)
-    ]
+    try:
+        name = _resolve_company(company)
+    except frappe.ValidationError as exc:
+        return {
+            "ok": False,
+            "user": frappe.session.user,
+            "error": str(exc),
+            "companies": frappe.get_all(CRED_DOCTYPE, pluck="name"),
+        }
 
-    if not meta.issingle:
-        record_count = frappe.db.count(CRED_DOCTYPE)
-    else:
-        record_count = None
+    doc = frappe.get_doc(CRED_DOCTYPE, name)
+    rows = []
+    for row in doc.credentials or []:
+        pwd = row.get_password("password", raise_exception=False)
+        rows.append({
+            "bank_feed": row.bank_feed,
+            "enabled": bool(row.enabled),
+            "has_username": bool(row.username),
+            "has_password": bool(pwd),
+            "bank_account": row.bank_account or None,
+            "currency": row.currency or None,
+        })
 
     return {
         "ok": True,
         "user": frappe.session.user,
-        "doctype": CRED_DOCTYPE,
-        "is_single": bool(meta.issingle),
-        "records": record_count,
-        "matched": matched,
-        "skipped": skipped,
+        "company": doc.company,
+        "company_enabled": bool(doc.enabled),
+        "rows": rows,
         "time": str(now_datetime()),
     }
 
 
 @frappe.whitelist()
-def get_credentials(docname=None):
-    """Return credentials keyed by environment variable name.
-
-    Response shape:
-        {
-          "ok": true,
-          "count": 8,
-          "values": {"IMBANK_USERNAME": "...", "IMBANK_PASSWORD": "...", ...}
-        }
-
-    Blank fields are omitted rather than returned empty, so an unfilled field in
-    ERPNext leaves the scraper's existing .env value alone instead of wiping it.
-    """
+def list_companies():
+    """Every company with credentials, for a scheduler that loops them."""
     _guard()
-
-    doc = _get_credential_doc(docname)
-    meta = frappe.get_meta(CRED_DOCTYPE)
-
-    values = {}
-    for fieldname, env_var, fieldtype in _credential_fieldnames(meta):
-        if fieldtype == "Password":
-            value = doc.get_password(fieldname, raise_exception=False)
-        else:
-            value = doc.get(fieldname)
-
-        value = (value or "").strip()
-        if value:
-            values[env_var] = value
-
-    frappe.logger("bank_credentials").info(
-        {"event": "credentials_served", "user": frappe.session.user, "fields": sorted(values)}
+    records = frappe.get_all(
+        CRED_DOCTYPE, fields=["name as company", "enabled"], order_by="company asc"
     )
-
-    return {"ok": True, "count": len(values), "values": values}
+    return {
+        "ok": True,
+        "companies": [r["company"] for r in records if r.get("enabled")],
+        "all": records,
+    }
 
 
 @frappe.whitelist()
-def get_fingerprints(docname=None):
-    """Same as get_credentials but without the secrets - safe to log.
+def get_credentials(company=None):
+    """Return one company's feeds.
+
+    Response shape:
+        {"ok": true, "company": "Jali Group Ltd", "count": 3,
+         "feeds": {
+            "imbank": {"username": "...", "password": "...",
+                       "bank_account": "I&M Current-OD - JK", "currency": ""},
+            ...
+         }}
+
+    Rows that are disabled, or missing a username or password, are omitted
+    rather than returned empty - so an incomplete row leaves the scraper's
+    existing .env value alone instead of wiping it.
+    """
+    _guard()
+
+    name = _resolve_company(company)
+    doc = frappe.get_doc(CRED_DOCTYPE, name)
+
+    if not doc.enabled:
+        return {"ok": True, "company": doc.company, "count": 0, "feeds": {},
+                "note": "company disabled"}
+
+    feeds = {}
+    for row in doc.credentials or []:
+        if not row.enabled:
+            continue
+        password = row.get_password("password", raise_exception=False) or ""
+        username = (row.username or "").strip()
+        if not username or not password:
+            continue
+        feeds[row.bank_feed] = {
+            "username": username,
+            "password": password,
+            "bank_account": row.bank_account or "",
+            "currency": row.currency or "",
+            "fingerprint": _fingerprint(username, password, row.bank_account),
+        }
+
+    _stamp_fetch(name)
+    frappe.logger("bank_credentials").info(
+        {"event": "credentials_served", "user": frappe.session.user,
+         "company": doc.company, "feeds": sorted(feeds)}
+    )
+
+    return {"ok": True, "company": doc.company, "count": len(feeds), "feeds": feeds}
+
+
+@frappe.whitelist()
+def get_fingerprints(company=None):
+    """The same keys with hashes instead of secrets - safe to log.
 
     Use it to answer "did someone change a password since the last good run?"
     """
     _guard()
-
-    payload = get_credentials(docname)
+    payload = get_credentials(company)
     return {
         "ok": True,
-        "fingerprints": {k: _fingerprint(v) for k, v in payload["values"].items()},
+        "company": payload.get("company"),
+        "fingerprints": {k: v["fingerprint"] for k, v in payload["feeds"].items()},
     }
+
+
+def _stamp_fetch(name):
+    """Record that the service pulled this company's credentials. Best effort."""
+    try:
+        frappe.db.set_value(CRED_DOCTYPE, name, "last_fetched_on", now_datetime(),
+                            update_modified=False)
+        frappe.db.commit()
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "bank_credentials: last_fetched_on failed")
