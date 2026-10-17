@@ -12,6 +12,8 @@ doc_events = {
 	"*": {
 		"validate": "jalipartners.utils.set_user_company",
 		"before_insert": "jalipartners.utils.set_user_company",
+        "on_trash": "jalipartners.utils.block_super_staff_delete",
+	    "before_cancel": "jalipartners.utils.block_super_staff_cancel",
 	},
 	"Sales Invoice": {"before_submit": "jalipartners.utils.prevent_submit_for_basic"},
 	"Purchase Invoice": {"before_submit": "jalipartners.utils.prevent_submit_for_basic"},
