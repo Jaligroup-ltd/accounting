@@ -217,3 +217,7 @@ Things the pipeline is sensitive to:
   its own GitHub deploy key, a `~/.ssh/config` entry, and GitHub's host fingerprint
   pre-accepted.
 
+
+bench --site accountingstaging.jalikoi.rw migrate
+bench --site accountingstaging.jalikoi.rw clear-cache
+bench build   

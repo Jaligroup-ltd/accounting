@@ -49,4 +49,9 @@ after_migrate = [
 ]
 doctype_js = {
 	"Bank Reconciliation Tool": "public/js/cash_coding.js",
+    "Sales Invoice": "public/js/sales_invoice.js",
+
+}
+doctype_list_js = {
+    "Item": "public/js/item_list.js",
 }
