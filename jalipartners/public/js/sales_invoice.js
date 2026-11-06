@@ -1,4 +1,31 @@
 (function () {
+    function show_notification_results(r) {
+        const n = r.notifications || {};
+        const lines = [];
+        let failed = false;
+        [["sms", __("SMS")], ["email", __("Email")]].forEach(([key, label]) => {
+            const s = n[key];
+            if (!s) return;
+            if (s.ok) {
+                lines.push(__("{0}: sent", [label]));
+            } else {
+                failed = true;
+                lines.push(
+                    __("{0}: failed ({1})", [label, frappe.utils.escape_html(s.error || __("unknown error"))])
+                );
+            }
+        });
+        if (!lines.length) return;
+        if (failed) {
+            lines.push("<br>" + __("The EBM invoice itself was generated successfully."));
+        }
+        frappe.msgprint({
+            title: __("EBM invoice {0}", [r.invoice_number]),
+            message: lines.join("<br>"),
+            indicator: failed ? "orange" : "green",
+        });
+    }
+
     function send_ebm(frm, extra) {
         frappe.call({
             method: "jalipartners.huza_ebm.generate_ebm_invoice",
@@ -6,35 +33,36 @@
             freeze: true,
             freeze_message: __("Sending invoice to Huza..."),
             callback: (r) => {
-                if (r.message) {
-                    frappe.show_alert({
-                        message: __("EBM invoice {0} generated", [r.message.invoice_number]),
-                        indicator: "green",
-                    });
-                    frm.reload_doc();
-                }
+                if (!r.message) return;
+                frappe.show_alert({
+                    message: __("EBM invoice {0} generated", [r.message.invoice_number]),
+                    indicator: "green",
+                });
+                show_notification_results(r.message);
+                frm.reload_doc();
             },
         });
     }
 
     function start_ebm(frm) {
         frappe.db
-            .get_value("Customer", frm.doc.customer, ["customer_type", "tax_id", "mobile_no"])
+            .get_value("Customer", frm.doc.customer, ["customer_type", "tax_id", "mobile_no", "email_id"])
             .then(({ message }) => {
                 message = message || {};
                 const is_company = message.customer_type === "Company";
                 const phone = frm.doc.contact_mobile || message.mobile_no || "";
+                const email = frm.doc.contact_email || message.email_id || "";
 
-                // Individuals with a phone number on file: no dialog, just a confirmation
-                if (!is_company && phone) {
-                    frappe.confirm(
-                        __("Send this invoice to Huza and generate the EBM invoice? This cannot be undone."),
-                        () => send_ebm(frm)
-                    );
-                    return;
-                }
+                const fields = [
+                    {
+                        fieldtype: "HTML",
+                        options:
+                            "<p class='text-muted'>" +
+                            __("This sends the invoice to Huza to generate the EBM invoice. It cannot be undone.") +
+                            "</p>",
+                    },
+                ];
 
-                const fields = [];
                 if (is_company) {
                     fields.push(
                         {
@@ -54,26 +82,64 @@
                         }
                     );
                 }
-                // Huza requires a phone number, so ask for it whenever none is on file
-                fields.push({
-                    fieldname: "customer_phone",
-                    fieldtype: "Data",
-                    label: __("Customer Phone"),
-                    reqd: 1,
-                    default: phone,
-                    description: __("Example: +250788123456"),
-                });
+
+                fields.push(
+                    {
+                        fieldname: "customer_phone",
+                        fieldtype: "Data",
+                        label: __("Customer Phone"),
+                        reqd: 1,
+                        default: phone,
+                        description: __("Example: +250788123456"),
+                    },
+                    {
+                        fieldname: "customer_email",
+                        fieldtype: "Data",
+                        options: "Email",
+                        label: __("Customer Email"),
+                        default: email,
+                        mandatory_depends_on: "eval:doc.send_email",
+                    },
+                    { fieldtype: "Section Break", label: __("Send invoice to the customer") },
+                    {
+                        fieldname: "send_sms",
+                        fieldtype: "Check",
+                        label: __("Send by SMS"),
+                        default: 0,
+                        // description: __("Uses SMS credits"),
+                    },
+                    { fieldtype: "Column Break" },
+                    {
+                        fieldname: "send_email",
+                        fieldtype: "Check",
+                        label: __("Send by email"),
+                        default: 0,
+                    }
+                );
 
                 const d = new frappe.ui.Dialog({
                     title: __("Generate EBM Invoice"),
                     fields: fields,
                     primary_action_label: __("Generate"),
                     primary_action(values) {
-                        const args = { customer_phone: (values.customer_phone || "").trim() };
-                        if (args.customer_phone.replace(/\D/g, "").length < 9) {
+                        const phone_value = (values.customer_phone || "").trim();
+                        if (phone_value.replace(/\D/g, "").length < 9) {
                             frappe.msgprint(__("Enter a valid phone number."));
                             return;
                         }
+                        const email_value = (values.customer_email || "").trim();
+                        if (values.send_email && !email_value) {
+                            frappe.msgprint(__("Enter the customer email to send the invoice by email."));
+                            return;
+                        }
+
+                        const args = {
+                            customer_phone: phone_value,
+                            customer_email: email_value,
+                            send_sms: values.send_sms ? 1 : 0,
+                            send_email: values.send_email ? 1 : 0,
+                        };
+
                         if (is_company) {
                             const tin = (values.customer_tin || "").replace(/\D/g, "");
                             const code = (values.purchase_code || "").trim();
@@ -88,6 +154,7 @@
                             args.customer_tin = tin;
                             args.purchase_code = code;
                         }
+
                         d.hide();
                         send_ebm(frm, args);
                     },

@@ -1,15 +1,19 @@
 import json
+import os
 import random
 import re
 from datetime import timedelta
+from html import escape
+from urllib.parse import urlparse
 
 import frappe
 import requests
 from frappe import _
 from frappe.model.naming import getseries
-from frappe.utils import flt, now_datetime
+from frappe.utils import cint, flt, now_datetime, validate_email_address
 
 from jalipartners.huza_sync import _cfg, fetch_huza_items
+from jalipartners.intouch_sms import SMS_ENV_KEYS, send_sms
 
 SERIES_KEY = "EBM-INV-"
 # Tax rate per Huza/RRA tax code. Verify against the RRA code table.
@@ -37,8 +41,21 @@ def _phone(raw):
     return "+" + d
 
 
+# ---------------------------------------------------------------------------
+# Entry point (called from the "Generate EBM Invoice" menu entry)
+# ---------------------------------------------------------------------------
+
 @frappe.whitelist()
-def generate_ebm_invoice(sales_invoice, purchase_code=None, customer_tin=None, customer_phone=None):
+def generate_ebm_invoice(sales_invoice, purchase_code=None, customer_tin=None, customer_phone=None,
+                         customer_email=None, send_sms=0, send_email=0):
+    if not frappe.db.has_column("Sales Invoice", "custom_ebm_invoice_number"):
+        frappe.throw(_(
+            "The 'EBM Invoice Number' field is missing on Sales Invoice. "
+            "Ask an administrator to run the jalipartners EBM field patch."
+        ))
+
+    want_sms, want_email = cint(send_sms), cint(send_email)
+
     # Row lock: a second click or user waits here until we commit, then sees the saved EBM number
     frappe.db.get_value("Sales Invoice", sales_invoice, "name", for_update=True)
     doc = frappe.get_doc("Sales Invoice", sales_invoice)
@@ -46,6 +63,7 @@ def generate_ebm_invoice(sales_invoice, purchase_code=None, customer_tin=None, c
     _validate(doc)
 
     phone, tin, code = _resolve_party(doc, customer_tin, purchase_code, customer_phone)
+    email = _check_notifications(customer_email, want_sms, want_email)
 
     huza_items = {i["itemCd"]: i for i in fetch_huza_items()}
     invoice_number = int(getseries(SERIES_KEY, 1))  # rolled back automatically if we throw below
@@ -68,11 +86,34 @@ def generate_ebm_invoice(sales_invoice, purchase_code=None, customer_tin=None, c
         msg = body.get("message") if isinstance(body, dict) else None
         frappe.throw(_("Huza rejected the invoice: {0}").format(msg or f"HTTP {status_code}"))
 
-    doc.db_set("custom_ebm_invoice_number", str(invoice_number), update_modified=False)
-    doc.add_comment("Info", _("EBM invoice {0} generated in Huza").format(invoice_number))
-    frappe.db.commit()
-    return {"invoice_number": invoice_number}
+    link = _receipt_link(body)
 
+    # Huza accepted it: make sure this invoice number is never reused, even if saving below fails
+    frappe.db.commit()
+    try:
+        doc.db_set("custom_ebm_invoice_number", str(invoice_number), update_modified=False)
+        comment = _("EBM invoice {0} generated in Huza").format(invoice_number)
+        if link:
+            comment += f' (<a href="{escape(link)}" target="_blank">{_("receipt")}</a>)'
+        doc.add_comment("Info", comment)
+        frappe.db.commit()
+    except Exception:
+        frappe.log_error(
+            frappe.get_traceback(),
+            f"EBM invoice {invoice_number} registered in Huza but not saved: {doc.name}",
+        )
+        frappe.throw(_(
+            "Huza registered EBM invoice {0}, but it could not be saved on this Sales Invoice. "
+            "Do not send it again. Contact an administrator."
+        ).format(invoice_number))
+
+    notifications = _notify(doc, invoice_number, payload["total"], phone, email, want_sms, want_email, link)
+    return {"invoice_number": invoice_number, "notifications": notifications, "receipt_link": link}
+
+
+# ---------------------------------------------------------------------------
+# Validation and party details
+# ---------------------------------------------------------------------------
 
 def _validate(doc):
     if doc.docstatus != 1:
@@ -116,6 +157,21 @@ def _resolve_party(doc, customer_tin, purchase_code, customer_phone=None):
     return phone, tin, code
 
 
+def _check_notifications(customer_email, want_sms, want_email):
+    """Fail early (before anything is sent to Huza) if a requested channel cannot work."""
+    email = (customer_email or "").strip()
+    if want_email and not validate_email_address(email):
+        frappe.throw(_("Enter a valid customer email address to send the invoice by email."))
+    if want_sms:
+        for key in SMS_ENV_KEYS:
+            _cfg(key)  # throws a clear "X is not configured" message
+    return email
+
+
+# ---------------------------------------------------------------------------
+# Huza payload
+# ---------------------------------------------------------------------------
+
 def _build_payload(doc, huza_items, invoice_number, phone, tin, purchase_code):
     missing = sorted({i.item_code for i in doc.items if i.item_code not in huza_items})
     if missing:
@@ -144,7 +200,7 @@ def _build_payload(doc, huza_items, invoice_number, phone, tin, purchase_code):
         rows.append({"h": h, "code": code, "rate": rate, "qty": qty, "unit": unit, "gross": gross, "tax": 0.0})
 
     # 2. Tax per tax code from the group total: tax = inclusive amount x rate / (100 + rate).
-    #    The rounding difference is put on the last line so lines add up to the group tax.
+    #    The rounding difference goes on the last line so lines add up to the group tax.
     groups = {}
     for r in rows:
         groups.setdefault(r["code"], []).append(r)
@@ -176,13 +232,13 @@ def _build_payload(doc, huza_items, invoice_number, phone, tin, purchase_code):
             "package": "1",
             "quantity": _money(r["qty"]),
             "uom": h.get("qtyUnitCd"),
-            "rate": _money(r["unit"]),           # tax-inclusive unit price
+            "rate": _money(r["unit"]),             # tax-inclusive unit price
             "isrcRt": h.get("isrcRt") or "0.00",
             "bcd": h.get("bcd"),
             "isrcAmt": h.get("isrcAmt") or "0.00",
             "isrccNm": h.get("isrccNm"),
             "isrccCd": h.get("isrccCd"),
-            "amount": _money(r["gross"]),        # tax-inclusive line amount
+            "amount": _money(r["gross"]),          # tax-inclusive line amount
             "item_code": h.get("itemCd"),
             "item_type_code": h.get("itemTyCd"),
             "tax_type": r["code"],
@@ -235,7 +291,8 @@ def _build_payload(doc, huza_items, invoice_number, phone, tin, purchase_code):
         "items": lines,
         "invoice_number": invoice_number,
     }
-    
+
+
 def _post_to_huza(payload):
     r = requests.post(
         f"{_cfg('HUZA_BASE_URL').rstrip('/')}/invoices",
@@ -249,6 +306,96 @@ def _post_to_huza(payload):
         body = {"raw": r.text[:2000]}
     return r.status_code, body
 
+
+# ---------------------------------------------------------------------------
+# Notifications (run only after Huza accepted the invoice, never raise)
+# ---------------------------------------------------------------------------
+
+def _receipt_link(body):
+    """Huza returns the receipt PDF URL in data.file_path."""
+    data = body.get("data") if isinstance(body, dict) else None
+    link = data.get("file_path") if isinstance(data, dict) else None
+    if not (isinstance(link, str) and link.startswith(("http://", "https://"))):
+        return None
+
+    # Optional: swap the host when Huza returns an internal address such as http://localhost:8080
+    public_base = os.environ.get("HUZA_RECEIPT_BASE_URL")
+    if public_base:
+        p = urlparse(link)
+        link = public_base.rstrip("/") + p.path + (f"?{p.query}" if p.query else "")
+    return link
+
+
+def _sms_text(doc, invoice_number, total, link):
+    # Kept short so it fits in one or two SMS segments
+    return f"{doc.company}: invoice no. {invoice_number}, {doc.currency} {flt(total):,.2f}. View: {link}"
+
+
+def _send_email(doc, email, invoice_number, total, link):
+    button = (
+        "display:inline-block;padding:10px 18px;background:#1a73e8;color:#ffffff;"
+        "text-decoration:none;border-radius:4px;"
+    )
+    message = (
+        f"<p>Dear {escape(doc.customer_name or '')},</p>"
+        f"<p>Your invoice no. <b>{invoice_number}</b> from {escape(doc.company)} "
+        f"({escape(doc.currency)} {flt(total):,.2f}) is ready.</p>"
+        f'<p><a href="{escape(link)}" style="{button}">View your invoice</a></p>'
+        f"<p>If the button does not work, copy this link into your browser:<br>{escape(link)}</p>"
+        "<p>Thank you.</p>"
+    )
+    frappe.sendmail(
+        recipients=[email],
+        subject=_("Your invoice from {0}").format(doc.company),
+        message=message,
+        reference_doctype="Sales Invoice",
+        reference_name=doc.name,
+        now=True,
+    )
+    return True, None
+
+
+def _safe(fn, *args):
+    """A failed SMS or email must never look like a failed invoice."""
+    try:
+        return fn(*args)
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "EBM notification failed")
+        return False, str(e)[:200] or "unexpected error"
+
+
+def _notify(doc, invoice_number, total, phone, email, want_sms, want_email, link):
+    result, notes = {}, []
+
+    if (want_sms or want_email) and not link:
+        error = _("Huza did not return a receipt link")
+        frappe.log_error(f"No data.file_path in the Huza response for {doc.name}", "EBM receipt link missing")
+        for key, label, wanted in (("sms", "SMS", want_sms), ("email", "Email", want_email)):
+            if wanted:
+                result[key] = {"ok": False, "error": error}
+                notes.append(f"{label} not sent: {error}")
+    else:
+        if want_sms:
+            ok, error = _safe(send_sms, phone, _sms_text(doc, invoice_number, total, link))
+            result["sms"] = {"ok": ok, "error": error}
+            notes.append(f"SMS sent to {phone}" if ok else f"SMS failed: {error}")
+        if want_email:
+            ok, error = _safe(_send_email, doc, email, invoice_number, total, link)
+            result["email"] = {"ok": ok, "error": error}
+            notes.append(f"Email sent to {email}" if ok else f"Email failed: {error}")
+
+    if notes:
+        try:
+            doc.add_comment("Info", "; ".join(notes))
+            frappe.db.commit()
+        except Exception:
+            frappe.log_error(frappe.get_traceback(), "EBM notification comment failed")
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Hook: an invoice that was fiscalized cannot be cancelled
+# ---------------------------------------------------------------------------
 
 def block_cancel_if_fiscalized(doc, method=None):
     if doc.get("custom_ebm_invoice_number"):
