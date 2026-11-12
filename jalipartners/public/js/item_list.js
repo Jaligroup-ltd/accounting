@@ -4,14 +4,14 @@
     const original_onload = settings.onload;
 
     settings.onload = function (listview) {
-        // keep ERPNext's own Item list behaviour
+        // keep IAS's own Item list behaviour
         if (original_onload) original_onload.call(this, listview);
 
         const label = __("Sync from Huza");
 
         listview.page.add_menu_item(label, () => {
             frappe.confirm(
-                __("Fetch items from Huza and create or update them in ERPNext?"),
+                __("Fetch items from Huza and create or update them in IAS ?"),
                 () => {
                     frappe.call({
                         method: "jalipartners.huza_sync.sync_items_from_huza",

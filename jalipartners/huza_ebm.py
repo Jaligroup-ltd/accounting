@@ -326,6 +326,29 @@ def _receipt_link(body):
     return link
 
 
+def _shorten_link(link):
+    """Shorten the receipt URL with TinyURL (used for the SMS only).
+    Returns the original link if TinyURL is not configured or fails, so the SMS is never blocked."""
+    token = os.environ.get("TINYURL_API_TOKEN")
+    if not token:
+        return link
+    try:
+        r = requests.post(
+            "https://api.tinyurl.com/create",
+            json={"url": link, "domain": os.environ.get("TINYURL_DOMAIN", "tinyurl.com")},
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            timeout=10,
+        )
+        body = r.json()
+        short = (body.get("data") or {}).get("tiny_url") if isinstance(body, dict) else None
+        if r.status_code < 400 and short:
+            return short
+        frappe.log_error(f"HTTP {r.status_code}\n{r.text[:500]}", "TinyURL rejected")
+    except Exception:
+        frappe.log_error(frappe.get_traceback(), "TinyURL request failed")
+    return link
+
+
 def _sms_text(doc, invoice_number, total, link):
     # Kept short so it fits in one or two SMS segments
     return f"{doc.company}: invoice no. {invoice_number}, {doc.currency} {flt(total):,.2f}. View: {link}"
@@ -341,7 +364,7 @@ def _send_email(doc, email, invoice_number, total, link):
         f"<p>Your invoice no. <b>{invoice_number}</b> from {escape(doc.company)} "
         f"({escape(doc.currency)} {flt(total):,.2f}) is ready.</p>"
         f'<p><a href="{escape(link)}" style="{button}">View your invoice</a></p>'
-        f"<p>If the button does not work, copy this link into your browser:<br>{escape(link)}</p>"
+        # f"<p>If the button does not work, copy this link into your browser:<br>{escape(link)}</p>"
         "<p>Thank you.</p>"
     )
     frappe.sendmail(
@@ -352,7 +375,22 @@ def _send_email(doc, email, invoice_number, total, link):
         reference_name=doc.name,
         now=True,
     )
-    return True, None
+
+    # sendmail() does not raise when emails are muted or the queue is held, so check the outcome
+    queued = frappe.get_all(
+        "Email Queue",
+        filters={"reference_doctype": "Sales Invoice", "reference_name": doc.name},
+        fields=["status", "error"],
+        order_by="creation desc",
+        limit=1,
+    )
+    status = queued[0].status if queued else None
+    if status == "Sent":
+        return True, None
+    if status == "Error":
+        lines = (queued[0].error or "").strip().splitlines()
+        return False, (lines[-1][:200] if lines else _("email server error"))
+    return False, _("the email was not sent (emails are disabled or paused on this site)")
 
 
 def _safe(fn, *args):
@@ -376,7 +414,8 @@ def _notify(doc, invoice_number, total, phone, email, want_sms, want_email, link
                 notes.append(f"{label} not sent: {error}")
     else:
         if want_sms:
-            ok, error = _safe(send_sms, phone, _sms_text(doc, invoice_number, total, link))
+            sms_link = _shorten_link(link)  # SMS gets the short link, email keeps the full one
+            ok, error = _safe(send_sms, phone, _sms_text(doc, invoice_number, total, sms_link))
             result["sms"] = {"ok": ok, "error": error}
             notes.append(f"SMS sent to {phone}" if ok else f"SMS failed: {error}")
         if want_email:
